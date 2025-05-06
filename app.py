@@ -24,6 +24,14 @@ from scipy.io.wavfile import write
 import tempfile
 
 import openai
+import re
+import os
+import tempfile
+import numpy as np
+from pydub import AudioSegment
+from gtts import gTTS
+from scipy.io.wavfile import write
+
 
 # Constants
 SAMPLE_RATE = 16000
@@ -32,6 +40,9 @@ SAMPLE_RATE = 16000
 torch.set_grad_enabled(False)
 device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
+# =============================================================================
+# Preprocessing functions
+# =============================================================================
 def dur_to_size(duration):
     latent_width = int(duration * 7.8)
     if latent_width % 4 != 0:
@@ -116,7 +127,6 @@ def save_audio(wav_data, filename):
 # =============================================================================
 # #Input Params
 # =============================================================================
-#prompt = "Heavy breathing" # running 
 
 #Select from audios num.This number control the number of candidates (e.g., generate three audios and choose the best to show you). A Larger value usually lead to better quality with heavier computation
 num_samples = 3
@@ -189,141 +199,6 @@ def generate_spatial_audiobook(text):
             annotated.append(f"[Sound: {cue}]")
     
     return '\n'.join(annotated)
-
-# ==============================
-# 1. Configuration
-# ==============================
-TEMP_DIR = tempfile.TemporaryDirectory()
-CONFIG = {
-    "crossfade": 150,
-    "sfx_duck": -6,
-    "headroom": -3,
-    "bitrate": "192k",
-    "sample_rate": 44100
-}
-
-# ==============================
-# 2. Sound Generation (Fixed)
-# ==============================
-def generate_tts_audio(prompt):
-    """Generate dummy sine wave audio for demonstration"""
-    try:
-        sps = CONFIG["sample_rate"]
-        freq_hz = 440.0  # Example frequency
-        duration_s = 5.0  # Example duration
-        
-        # Generate sine wave as NumPy array
-        each_sample_number = np.arange(duration_s * sps)
-        waveform = np.sin(2 * np.pi * each_sample_number * freq_hz / sps)
-        waveform_integers = np.int16(waveform * 32767)  # Convert to PCM
-        
-        # Save as WAV file
-        temp_file = os.path.join(TEMP_DIR.name, f"{prompt.replace(' ', '_')}.wav")
-        write(temp_file, sps, waveform_integers)
-        
-        return temp_file
-    except Exception as e:
-        print(f"SFX Generation Error: {e}")
-        return None
-
-def generate_spatial_sfx(description, output_path):
-    """Generate spatial sound effect using fixed audio generation"""
-    try:
-        audio_file = generate_audio(description)
-        
-        if audio_file:  # Ensure valid file path is returned
-            #sfx = AudioSegment.from_file(audio_file)
-            #sfx.export(output_path, format="wav")
-            save_audio(audio_file, output_path)
-            return True
-        else:
-            raise ValueError("Invalid audio data returned by generate_audio()")
-    except Exception as e:
-        print(f"SFX Generation Error: {e}")
-        return False
-
-# ==============================
-# 3. Text Processing and TTS
-# ==============================
-def parse_content(text):
-    text_parts = re.split(r'\[Sound:.*?\]', text)
-    text_parts = [part.strip() for part in text_parts if part.strip()]
-    
-    sound_effects = re.findall(r'\[Sound: (.*?)\]', text)
-    
-    return list(zip(text_parts, sound_effects + [""]*(len(text_parts)-len(sound_effects))))
-
-def generate_tts(text, output_path):
-    try:
-        temp_mp3 = os.path.join(TEMP_DIR.name, "temp.mp3")
-        tts = gTTS(text=text, lang='en')
-        tts.save(temp_mp3)
-        
-        AudioSegment.from_mp3(temp_mp3).export(output_path, format="wav")
-        return True
-    except Exception as e:
-        print(f"TTS Error: {e}")
-        return False
-
-# ==============================
-# 4. Mixing Engine and Main Processor
-# ==============================
-def smart_mix(speech, sfx):
-    target_length = max(len(speech), len(sfx))
-    speech += AudioSegment.silent(duration=target_length - len(speech))
-    sfx += AudioSegment.silent(duration=target_length - len(sfx))
-    
-    return speech.overlay(sfx.apply_gain(CONFIG["sfx_duck"]))
-
-def create_audiobook(input_text, output_file):
-    
-    parsed_text = generate_spatial_audiobook(input_text)
-    segments = parse_content(parsed_text)
-    final_mix = AudioSegment.silent(duration=500)
-    
-    for idx, (text, sfx_desc) in enumerate(segments):
-        print(f"Processing segment {idx+1}/{len(segments)}")
-        
-        speech_path = os.path.join(TEMP_DIR.name, f"speech_{idx}.wav")
-        if not generate_tts(text, speech_path):
-            continue
-        
-        sfx_path = os.path.join(TEMP_DIR.name, f"sfx_{idx}.wav")
-        print(sfx_desc)
-        print(sfx_path)
-        if sfx_desc and not generate_spatial_sfx(sfx_desc, sfx_path):
-            sfx_path = None
-        
-        speech = AudioSegment.from_wav(speech_path)
-        sfx = AudioSegment.from_wav(sfx_path) if sfx_path and os.path.exists(sfx_path) else AudioSegment.silent(0)
-        
-        mixed = smart_mix(speech, sfx)
-        final_mix += mixed
-    
-    final_mix.normalize().apply_gain(CONFIG["headroom"]).export(output_file, format="wav", bitrate=CONFIG["bitrate"])
-    
-    TEMP_DIR.cleanup()
-    print(f"Successfully created {output_file}")
-
-# ==============================
-# Example Usage
-# ==============================
-INPUT_TEXT = """NATHAN RUBIN DIED because he got brave. Not the sustained kind of thing that wins you a medal in a war, but the split-second kind of blurting outrage that gets you killed on the street."""
-
-create_audiobook(INPUT_TEXT, "spatial_audiobook.wav")
-
-# generate_spatial_audiobook(INPUT_TEXT)
-
-# generate_spatial_sfx("girl whistling on road", r"C:\Users\janar\OneDrive\Desktop\student_proj\generate_spatial_audio\girl_whistling.wav")
-
-#---------------------------------------------------------------------------
-import re
-import os
-import tempfile
-import numpy as np
-from pydub import AudioSegment
-from gtts import gTTS
-from scipy.io.wavfile import write
 
 # ==============================
 # 1. Configuration
@@ -470,6 +345,11 @@ def create_audiobook(input_text, output_file):
     
     TEMP_DIR.cleanup()
     print(f"Successfully created {output_file}")
+
+# ==============================
+# Example Usage
+# ==============================
+INPUT_TEXT = """NATHAN RUBIN DIED because he got brave. Not the sustained kind of thing that wins you a medal in a war, but the split-second kind of blurting outrage that gets you killed on the street."""
 
 create_audiobook(INPUT_TEXT, "output/spatial_audiobook.wav")
 
